@@ -64,8 +64,7 @@ run-dev:
 		exit 1; \
 	fi
 	@GITHUB_TOKEN=$$(cat $(GIT_TOKEN_FILE)) && \
-	podman run -it --rm -p 8080:8080 -p 5678:5678 --net $(NETWORK_NAME) \
-	-v "$(ART_DASHBOARD_SERVER_DIR)":/workspaces/art-dash:cached,z \
+	podman run -it --name dj1 --rm -p 8080:8080 -p 5678:5678 --net $(NETWORK_NAME) \
 	-v "$(ART_TOOLS_DIR)/doozer/":/workspaces/doozer/:cached,z \
 	-v "$(ART_TOOLS_DIR)/elliott/":/workspaces/elliott/:cached,z \
 	-v $(HOME)/.ssh:/home/$(USER)/.ssh:ro,cached,z \
