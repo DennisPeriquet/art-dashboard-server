@@ -1,6 +1,6 @@
 # Define variables
 OPENSHIFT=$(HOME)/mygit/dperique/NG/Dennis/Redhat/tmp/art-ui
-GIT_TOKEN_FILE=$(HOME)/mygit/dperique/NG/Dennis/Redhat/tmp/art-ui/.git_token
+GIT_TOKEN_FILE=$(OPENSHIFT)/.git/git_token
 NETWORK_NAME=art-dashboard-network
 MARIADB_CONTAINER_NAME=mariadb
 MARIADB_IMAGE=docker.io/library/mariadb:10.6.14
@@ -62,8 +62,8 @@ run-dev:
 	-v "$(ART_TOOLS_DIR)/doozer/":/workspaces/doozer/:cached,z \
 	-v "$(ART_TOOLS_DIR)/elliott/":/workspaces/elliott/:cached,z \
 	-v $(HOME)/.ssh:/home/$(USER)/.ssh:ro,cached,z \
-	-v $(HOME)/.docker/config.json:/home/$(USER)/.docker/config.json:ro,cached,z \
-	-v $(HOME)/.gitconfig:/home/$(USER)/.gitconfig:ro,cached,z \
+	-v $(OPENSHIFT)/.docker/config.json:/home/$(USER)/.docker/config.json:ro,cached,z \
+	-v $(OPENSHIFT)/.git/.gitconfig:/home/$(USER)/.gitconfig:ro,cached,z \
 	-e RUN_ENV=development \
 	-e GITHUB_PERSONAL_ACCESS_TOKEN=$$GITHUB_TOKEN \
 	art-dash-server:latest
