@@ -9,6 +9,7 @@ MARIADB_DATABASE=doozer_build
 
 ART_DASHBOARD_SERVER_DIR=$(OPENSHIFT)/art-dashboard-server
 ART_TOOLS_DIR=$(OPENSHIFT)/art-tools
+TEST_URL=http://localhost:8080/api/v1/test
 
 # Default target for setting up the environment
 .PHONY: setup-dev-env
@@ -67,6 +68,12 @@ run-dev:
 	-e RUN_ENV=development \
 	-e GITHUB_PERSONAL_ACCESS_TOKEN=$$GITHUB_TOKEN \
 	art-dash-server:latest
+
+# Test if the server is running by checking the response of curl to the API
+.PHONY: dev-test
+dev-test:
+	@curl -s -o /dev/null -w "%{http_code}" $(TEST_URL) | grep -q 200 && \
+		echo "dev environment is working" || echo "dev environment is not working"
 
 # Clean up development environment by stopping and removing containers and network
 .PHONY: clean-dev
