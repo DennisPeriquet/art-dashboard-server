@@ -40,6 +40,9 @@ podman network create art-dashboard-network
 
 ## 3. Setup local database
 
+If what you are working on during development requires DB operations, you'll need to populate the
+database, otherwise, skip to the section that just creates the database.
+
 Start the local DB server using a specific version of MariaDB (10.6.14), as the latest version doesn't include MySQL.
 ```
 podman run --net art-dashboard-network --name mariadb -e MARIADB_ROOT_PASSWORD=secret -e MARIADB_DATABASE=doozer_build -d docker.io/library/mariadb:10.6.14
@@ -72,10 +75,11 @@ Import db into the mariadb container
 podman cp test.sql mariadb:/test.sql
 podman exec -ti mariadb /bin/bash
 
-# Inside the container
+# Inside the container create the database
 mysql -uroot -psecret
 CREATE DATABASE art_dash;
 exit
+# Do this if you need to import data.
 mysql -uroot -psecret art_dash < test.sql
 ```
 Password is `secret` as defined in the podman run command.
@@ -89,9 +93,6 @@ OPENSHIFT=$HOME/ART-dash
 cd $OPENSHIFT
 git clone https://github.com/openshift-eng/art-dashboard-server.git
 git clone https://github.com/openshift-eng/art-tools.git
-$HOME/.ssh:/home/$USER/.ssh
-$HOME/.docker/config.json
-$HOME/.gitconfig
 
 podman run -it --rm -p 8080:8080 --net art-dashboard-network \
 -v "$OPENSHIFT/art-dashboard-server":/workspaces/art-dash:cached,z \
