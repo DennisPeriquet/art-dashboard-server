@@ -129,6 +129,7 @@ To stop mariadb server, run `podman stop mariadb`
 
 ## Notes:
 
+- If you want to do `pip3 install -r requirements.txt`, do this first: `sudo dnf install mysql-devel`
 - To debug in development, set `DEBUG = True` in `build_interface/settings.py`. But it SHOULD be set to `False` before committing/pushing to remote.
 - To test deployment, use the `art-build-dev` namespace. Docs can be found at [art-dash-deployment](https://github.com/openshift-eng/art-config/tree/main/clusters/psi-ocp4/aos-art-web) (Need to be added to our team in Openshift GitHub org)
 - Environment variables that is common to both development and production should be defined in `conf/common.env`. The variables in that file is loaded first and then the ones on `prod.env` or `dev.env` depending on the environment.
