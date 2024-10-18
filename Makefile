@@ -11,6 +11,12 @@ ART_DASHBOARD_SERVER_DIR=$(OPENSHIFT)/art-dashboard-server
 ART_TOOLS_DIR=$(OPENSHIFT)/art-tools
 TEST_URL=http://localhost:8080/api/v1/test
 
+# Build the development environment images
+.PHONY: build-dev
+build-dev:
+	podman build -f Dockerfile.base -t art-dash-server:base --build-arg USERNAME=$(USER) --build-arg USER_UID=1000 .
+	podman build -f Dockerfile.update -t art-dash-server:latest --build-arg USERNAME=$(USER) --build-arg USER_UID=1000 .
+
 # Default target for setting up the environment
 .PHONY: setup-dev-env
 setup-dev-env: check-network check-mariadb clone-repos
@@ -58,7 +64,7 @@ run-dev:
 		exit 1; \
 	fi
 	@GITHUB_TOKEN=$$(cat $(GIT_TOKEN_FILE)) && \
-	podman run -it --rm -p 8080:8080 --net $(NETWORK_NAME) \
+	podman run -it --rm -p 8080:8080 -p 5678:5678 --net $(NETWORK_NAME) \
 	-v "$(ART_DASHBOARD_SERVER_DIR)":/workspaces/art-dash:cached,z \
 	-v "$(ART_TOOLS_DIR)/doozer/":/workspaces/doozer/:cached,z \
 	-v "$(ART_TOOLS_DIR)/elliott/":/workspaces/elliott/:cached,z \

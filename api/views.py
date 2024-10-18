@@ -171,9 +171,15 @@ def branch_data(request):
 
 @api_view(["GET"])
 def test(request):
+    print("Waiting for debugger to attach...")
+    import debugpy
+    debugpy.listen(("0.0.0.0", 5678))
+    print("Waiting for debugger to attach...")
+    debugpy.wait_for_client()  # Pause execution until the debugger is attached
+
     return Response({
         "status": "success",
-        "payload": "Setup successful!"
+        "payload": "Setup yayayayya successful!"
     }, status=200)
 
 
