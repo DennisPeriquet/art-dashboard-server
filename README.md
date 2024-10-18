@@ -40,8 +40,8 @@ podman network create art-dashboard-network
 
 ## 3. Setup local database
 
-If what you are working on during development requires DB operations, you'll need to populate the
-database, otherwise, skip to the section that just creates the database.
+During development, if your modifications perform or depend on any DB operations, you'll need to
+populate the database; if not, skip to the section that just creates the database.
 
 Start the local DB server using a specific version of MariaDB (10.6.14), as the latest version doesn't include MySQL.
 ```
@@ -75,10 +75,11 @@ Import db into the mariadb container
 podman cp test.sql mariadb:/test.sql
 podman exec -ti mariadb /bin/bash
 
-# Inside the container create the database
+# Inside the container, create the database
 mysql -uroot -psecret
 CREATE DATABASE art_dash;
 exit
+
 # Do this if you need to import data.
 mysql -uroot -psecret art_dash < test.sql
 ```
@@ -88,7 +89,7 @@ Password is `secret` as defined in the podman run command.
 ## 4. Run container
 
 ```
-# create a workspace, clone art-tools and art-dashoard-server to this location.
+# create a workspace, git clone art-tools and art-dashoard-server  repos in this location.
 OPENSHIFT=$HOME/ART-dash
 cd $OPENSHIFT
 git clone https://github.com/openshift-eng/art-dashboard-server.git
@@ -129,7 +130,6 @@ To stop mariadb server, run `podman stop mariadb`
 
 ## Notes:
 
-- If you want to do `pip3 install -r requirements.txt`, do this first: `sudo dnf install mysql-devel`
 - To debug in development, set `DEBUG = True` in `build_interface/settings.py`. But it SHOULD be set to `False` before committing/pushing to remote.
 - To test deployment, use the `art-build-dev` namespace. Docs can be found at [art-dash-deployment](https://github.com/openshift-eng/art-config/tree/main/clusters/psi-ocp4/aos-art-web) (Need to be added to our team in Openshift GitHub org)
 - Environment variables that is common to both development and production should be defined in `conf/common.env`. The variables in that file is loaded first and then the ones on `prod.env` or `dev.env` depending on the environment.

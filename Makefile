@@ -1,5 +1,5 @@
 # Define variables
-OPENSHIFT=$(HOME)/mygit/dperique/NG/Dennis/Redhat/tmp/art-ui
+OPENSHIFT=$(HOME)/tmp/art-ui
 GIT_TOKEN_FILE=$(OPENSHIFT)/.git/git_token
 NETWORK_NAME=art-dashboard-network
 MARIADB_CONTAINER_NAME=mariadb

@@ -3,3 +3,4 @@ __pycache__/
 venv/
 .idea/
 .aws/
+git_token
