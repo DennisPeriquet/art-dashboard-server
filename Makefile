@@ -1,6 +1,6 @@
 # Define variables
 OPENSHIFT=$(HOME)/tmp/art-ui
-GIT_TOKEN_FILE=$(OPENSHIFT)/.git/git_token
+GIT_TOKEN_FILE=$(OPENSHIFT)/git_token
 NETWORK_NAME=art-dashboard-network
 MARIADB_CONTAINER_NAME=mariadb
 MARIADB_IMAGE=docker.io/library/mariadb:10.6.14
@@ -51,6 +51,11 @@ check-mariadb:
 # Clone repositories if they don't exist
 .PHONY: clone-repos
 clone-repos:
+	mkdir -p $(OPENSHIFT)/.git
+	mkdir -p $(OPENSHIFT)/.docker
+	cd $(OPENSHIFT)
+	touch $(OPENSHIFT)/.git/.gitconfig
+	touch $(OPENSHIFT)/.docker/config.json
 	@if [ ! -d $(ART_DASHBOARD_SERVER_DIR) ]; then \
 		echo "Cloning art-dashboard-server"; \
 		git clone https://github.com/openshift-eng/art-dashboard-server.git $(ART_DASHBOARD_SERVER_DIR); \
@@ -63,6 +68,7 @@ clone-repos:
 # Target to run the development environment
 .PHONY: run-dev
 run-dev:
+	cd $(OPENSHIFT)
 	@if [ ! -f $(GIT_TOKEN_FILE) ]; then \
 		echo "Error: GitHub token file not found."; \
 		exit 1; \
@@ -76,6 +82,7 @@ run-dev:
 	-v $(OPENSHIFT)/.git/.gitconfig:/home/$(USER)/.gitconfig:ro,cached,z \
 	-e RUN_ENV=development \
 	-e GITHUB_PERSONAL_ACCESS_TOKEN=$$GITHUB_TOKEN \
+	-e GITHUB_TOKEN=$$(cat $(GIT_TOKEN_FILE)) \
 	art-dash-server:latest
 
 # Test if the server is running by checking the response of curl to the API
