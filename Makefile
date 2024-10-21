@@ -11,10 +11,14 @@ ART_DASHBOARD_SERVER_DIR=$(OPENSHIFT)/art-dashboard-server
 ART_TOOLS_DIR=$(OPENSHIFT)/art-tools
 TEST_URL=http://localhost:8080/api/v1/test
 
-# Build the development environment images
+# Build the development environment base image
+.PHONY: build-dev-base
+build-dev-base:
+	podman build -f Dockerfile.base -t art-dash-server:base --build-arg USERNAME=$(USER) --build-arg USER_UID=1000 .
+
+# Build the development environment update image
 .PHONY: build-dev
 build-dev:
-	podman build -f Dockerfile.base -t art-dash-server:base --build-arg USERNAME=$(USER) --build-arg USER_UID=1000 .
 	podman build -f Dockerfile.update -t art-dash-server:latest --build-arg USERNAME=$(USER) --build-arg USER_UID=1000 .
 
 # Default target for setting up the environment
