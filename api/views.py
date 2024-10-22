@@ -11,10 +11,13 @@ from build.models import Build
 from . import request_dispatcher
 from .serializer import BuildSerializer
 import django_filters
+from github import Github, GithubException
 import json
 import re
 import os
 import jwt
+import time
+import uuid
 from datetime import datetime, timedelta
 from build_interface.settings import SECRET_KEY, SESSION_COOKIE_DOMAIN, JWTAuthentication
 
@@ -175,6 +178,124 @@ def test(request):
         "status": "success",
         "payload": "Setup successful!"
     }, status=200)
+
+
+@api_view(["GET"])
+def git_api(request):
+    try:
+        git_user = request.query_params.get('git_user', None)
+        branch = request.query_params.get('branch', None)
+        jira_number = request.query_params.get('jira_number', None)
+        file_content = request.query_params.get('file_content', None)
+        image_name = request.query_params.get('image_name', None)
+        test_mode = request.query_params.get('test_mode', None)
+
+        # extract the host from the request.
+        host = request.get_host()
+
+        if not all([git_user, branch, jira_number, file_content, image_name]):
+            # These are all required. If any are missing, return an error and
+            # list what the user passed in.
+            return Response({
+                "error": "Missing required parameters",
+                "parameters": {
+                    "git_user": git_user,
+                    "branch": branch,
+                    "jira_number": jira_number,
+                    "file_content": file_content,
+                    "image_name": image_name
+                }
+            }, status=400)
+
+        print(f"Git User: {git_user}")
+        print(f"Jira Number: {jira_number}")
+
+        # Do this for now to speed things up for the connectivity test.
+        # Test mode is the default (when not specified).
+        if not test_mode or 'true' in test_mode.lower():
+            return Response({
+                "status": "success",
+                "payload": f"{host}: Fake PR created successfully",
+                "pr_url": "https://github.com/DennisPeriquet/ocp-build-data/pull/10"
+            }, status=200)
+
+        # Load the git token from an environment variable, later we can update the deployment
+        # to get the token from a Kubernetes environment variable sourced from a secret.
+        github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
+        if not github_token:
+            return Response({"error": "git token not in GITHUB_PERSONAL_ACCESS_TOKEN environment variable"}, status=500)
+
+        git_object = Github(github_token)
+
+        def make_github_request(func, *args, **kwargs):
+            """
+            This function applies retry logic (with exponential backoff) to git api calls.
+            """
+
+            max_retries = 3
+            retry_delay = 5
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except GithubException as e:
+                    if e.status == 403 and "rate limit" in e.data.get("message", "").lower():
+                        print(f"Rate limit exceeded, retrying in {retry_delay} seconds...")
+                    elif e.status >= 500 or e.status < 600:
+                        print(f"Server error {e.status}, retrying in {retry_delay} seconds...")
+                    else:
+                        raise
+                except Exception as e:
+                    print(f"Unexpected error: {str(e)}")
+                    raise
+                time.sleep(retry_delay)
+                retry_delay *= 2
+            raise Exception("Max retries exceeded on call to {func.__name__}")
+
+        # Get the repository
+        repo = make_github_request(git_object.get_repo, f"{git_user}/ocp-build-data")
+
+        # Get the base branch
+        base_branch = make_github_request(repo.get_branch, branch)
+
+        # Generate a unique branch name from the base branch
+        unique_id = uuid.uuid4().hex[:10]
+        new_branch_name = f"art-dashboard-new-image-{unique_id}"
+
+        # Create a new branch off the base branch
+        make_github_request(repo.create_git_ref, ref=f"refs/heads/{new_branch_name}", sha=base_branch.commit.sha)
+
+        # Create the file (images/pf-status-relay.yml) on the new branch
+        file_path = f"images/{image_name}.yml"
+        make_github_request(
+            repo.create_file,
+            path=file_path,
+            message=f"{image_name} image add",
+            content=file_content,
+            branch=new_branch_name
+        )
+
+        # Create a pull request from the new branch to the base branch
+        pr = make_github_request(
+            repo.create_pull,
+            title=f"[{jira_number}] {image_name} image add",
+            body=f"Ticket: {jira_number}\n\nThis PR adds the {image_name} image file",
+            head=new_branch_name,
+            base=branch
+        )
+
+        print(f"Pull request created: {pr.html_url} on branch {new_branch_name}")
+        return Response({
+            "status": "success",
+            "payload": "PR created successfully",
+            "pr_url": pr.html_url
+        }, status=200)
+
+    except GithubException as e:
+        print(f"git api error: {str(e)}")
+        return Response({"error": f"git api error: {e.data.get('message', 'Unknown error')}"}, status=e.status)
+    except Exception as e:
+        print(f"Unexpected error: {str(e)}")
+        return Response({"error": f"Unexpected error: {str(e)}"}, status=500)
 
 
 @api_view(["GET"])

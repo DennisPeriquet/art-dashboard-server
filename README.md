@@ -10,11 +10,21 @@
 you can build it from scratch
 ```
 # only required once unless RPM reqs change
+# requires access to certs.corp.redhat.com (which is only accessible on the Redhat network)
 podman build -f Dockerfile.base -t art-dash-server:base --build-arg USERNAME=$USER --build-arg USER_UID=$(id -u) .
 
 # repeat this to update the app as it changes
 podman build -f Dockerfile.update -t art-dash-server:latest --build-arg USERNAME=$USER --build-arg USER_UID=$(id -u) .
 ```
+
+If you get an error like this when running the `podman build`:
+
+```
+useradd warning: <your UserID>'s uid 4205753 outside of the UID_MIN 1000 and UID_MAX 60000 range.
+```
+
+Change `$(id -u)` above to something within that range (e.g., 1000).
+
 or you can get the build from [cluster](https://console-openshift-console.apps.artc2023.pc3z.p1.openshiftapps.com/k8s/ns/art-dashboard-server/imagestreams/art-dash-server)
 ```
 # after you log in to the cluster on CLI
@@ -29,6 +39,9 @@ podman network create art-dashboard-network
 ```
 
 ## 3. Setup local database
+
+During development, if your modifications perform or depend on any DB operations, you'll need to
+populate the database; if not, skip to the section that just creates the database.
 
 Start the local DB server using a specific version of MariaDB (10.6.14), as the latest version doesn't include MySQL.
 ```
@@ -62,10 +75,12 @@ Import db into the mariadb container
 podman cp test.sql mariadb:/test.sql
 podman exec -ti mariadb /bin/bash
 
-# Inside the container
+# Inside the container, create the database
 mysql -uroot -psecret
 CREATE DATABASE art_dash;
 exit
+
+# Do this if you need to import data.
 mysql -uroot -psecret art_dash < test.sql
 ```
 Password is `secret` as defined in the podman run command.
@@ -74,7 +89,11 @@ Password is `secret` as defined in the podman run command.
 ## 4. Run container
 
 ```
-OPENSHIFT=$HOME/ART-dash    # create a workspace, clone art-tools and art-dash to this location.
+# create a workspace, git clone art-tools and art-dashoard-server  repos in this location.
+OPENSHIFT=$HOME/ART-dash
+cd $OPENSHIFT
+git clone https://github.com/openshift-eng/art-dashboard-server.git
+git clone https://github.com/openshift-eng/art-tools.git
 
 podman run -it --rm -p 8080:8080 --net art-dashboard-network \
 -v "$OPENSHIFT/art-dashboard-server":/workspaces/art-dash:cached,z \
@@ -104,6 +123,9 @@ Referrer-Policy: same-origin
 Cross-Origin-Opener-Policy: same-origin
 
 ```
+
+NOTE: If you want to run the server on a specific host, add it to the `ALLOWED_HOSTS` list in [settings.py](https://github.com/openshift-eng/art-dashboard-server/blob/00e65d2dfd13207ead5fa856a66aff164febf077/build_interface/settings.py#L101). For example, to run on `192.168.1.100`, add `192.168.1.100`, to run on `myhost.com`, add `myhost.com`. If you forget to do that, a curl like this: `curl -i http://myhost.com:8080...` will result in a `400 Bad Request`.
+
 To stop `art-dash-server:latest`, use `Ctrl-C`
 
 To stop mariadb server, run `podman stop mariadb`
