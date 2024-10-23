@@ -78,7 +78,15 @@ clone-repos:
 		git clone https://github.com/openshift-eng/art-tools.git $(ART_TOOLS_DIR); \
 	fi
 
+EXTRA_ARGS =
+
+ifeq ($(DEBUG_MODE),1)
+    EXTRA_ARGS = bash -c "sudo /usr/sbin/sshd -D -e"
+endif
+
 # Run the development environment
+# Run like this if you want to debug with vscode across ssh: 'make run-dev DEBUG_MODE=1'
+
 .PHONY: run-dev
 run-dev:
 	cd $(OPENSHIFT)
@@ -86,15 +94,15 @@ run-dev:
 		echo "Error: GitHub token file not found."; \
 		exit 1; \
 	fi
-	podman run -it --name dj1 --rm -p 8080:8080 -p 5678:5678 --net $(NETWORK_NAME) \
-	-v "$(ART_TOOLS_DIR)/doozer/":/workspaces/doozer/:cached,z \
-	-v "$(ART_TOOLS_DIR)/elliott/":/workspaces/elliott/:cached,z \
-	-v $(OPENSHIFT)/.ssh:/home/$(USER)/.ssh:ro,cached,z \
-	-v $(OPENSHIFT)/.docker/config.json:/home/$(USER)/.docker/config.json:ro,cached,z \
-	-v $(OPENSHIFT)/.git/.gitconfig:/home/$(USER)/.gitconfig:ro,cached,z \
-	-e RUN_ENV=development \
-	-e GITHUB_PERSONAL_ACCESS_TOKEN=$$(cat $(GIT_TOKEN_FILE)) \
-	art-dash-server:latest
+	podman run -it --name dj1 --rm -p 8080:8080 -p 5678:5678 -p 3022:22 --net $(NETWORK_NAME) \
+		-v "$(ART_TOOLS_DIR)/doozer/":/workspaces/doozer/:cached,z \
+		-v "$(ART_TOOLS_DIR)/elliott/":/workspaces/elliott/:cached,z \
+		-v $(OPENSHIFT)/.ssh:/home/$(USER)/.ssh:ro,cached,z \
+		-v $(OPENSHIFT)/.docker/config.json:/home/$(USER)/.docker/config.json:ro,cached,z \
+		-v $(OPENSHIFT)/.git/.gitconfig:/home/$(USER)/.gitconfig:ro,cached,z \
+		-e RUN_ENV=development \
+		-e GITHUB_PERSONAL_ACCESS_TOKEN=$$(cat $(GIT_TOKEN_FILE)) \
+		art-dash-server:latest $(EXTRA_ARGS)
 
 # Test if the server is running by checking the response of curl to the API
 .PHONY: dev-test
