@@ -94,7 +94,7 @@ run-dev:
 		echo "Error: GitHub token file not found."; \
 		exit 1; \
 	fi
-	podman run -it --name dj1 --rm -p 8080:8080 -p 5678:5678 -p 3022:22 --net $(NETWORK_NAME) \
+	podman run --privileged -it --name dj1 --rm -p 8080:8080 -p 5678:5678 -p 3022:22 --net $(NETWORK_NAME) \
 		-v "$(ART_TOOLS_DIR)/doozer/":/workspaces/doozer/:cached,z \
 		-v "$(ART_TOOLS_DIR)/elliott/":/workspaces/elliott/:cached,z \
 		-v $(OPENSHIFT)/.ssh:/home/$(USER)/.ssh:ro,cached,z \

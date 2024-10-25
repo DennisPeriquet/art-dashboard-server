@@ -138,3 +138,69 @@ To stop mariadb server, run `podman stop mariadb`
 - Environment variables that is common to both development and production should be defined in `conf/common.env`. The variables in that file is loaded first and then the ones on `prod.env` or `dev.env` depending on the environment.
 - It's recommended to set up a kerberos config file similar to the one in this project so that you can easily mount your keytab as shown above. Otherwise, you'll have to `kinit` inside the container everytime. Please make modifications to the volume mount command to reflect the keytab format in your local.
 - If an error like `failed to export image: failed to create image: failed to get layer` shows up during container build, re-run the command again.
+
+## Building using the Makefile
+
+* Create the base image: make build-dev-base
+* Create the update image: make build-dev
+* Setup the develoment enviroment: make setup-dev-env
+* Create the art-dash database: make create-db
+* Run the container: make run-dev
+  * For debug mode, use: make run-dev DEBUG_MODE=1
+
+```bash
+
+```
+### Debugging with vscode and ssh
+
+To run the python debugger with vscode for the container, you'll need these:
+
+* ability to login to the container via ssh without a password
+  * modify your ~/.ssh/config to do this
+  ```
+  Host art1
+  Hostname 127.0.0.1
+  StrictHostKeyChecking no
+  Port 3022
+  IdentityFile ~/tmp/art_ui/.ssh/id_rsa
+  User dperique
+  ```
+
+  * Add your ssh private key and authorized_keys (contain the corresponding ssh public key) to the .ssh subdir in your development environment (~/tmp/art-ui/.ssh):
+
+  ```bash
+  cd ~/tmp/arti-ui
+  cp ~/.ssh/id_rsa ./.ssh
+  cat ~/.ssh/id_rsa.pub ./.ssh/authorized_keys
+  ```
+
+* vscode with python debugging plugins installed
+  * install the "Python Debugger extension using debugpy" from Microsoft 
+* this .vscode/launch.json
+
+```json
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: Django",
+            "type": "debugpy",
+            "request": "launch",
+            "args": [
+                "runserver",
+                "0.0.0.0:8080",
+                "--noreload"
+            ],
+            "env": {
+                "RUN_ENV": "development",
+                "GITHUB_PERSONAL_ACCESS_TOKEN": "<your git Personal Access token",
+                "JIRA_EMAIL": "<your email>",
+                "JIRA_TOKEN": "<your jira token"
+            },
+            "django": true,
+            "autoStartBrowser": false,
+            "program": "${workspaceFolder}/manage.py"
+        }
+    ]
+}
+```

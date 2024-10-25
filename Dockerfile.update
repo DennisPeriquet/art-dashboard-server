@@ -25,6 +25,10 @@ RUN dnf install -y openssh-server && \
 USER "$USER_UID"
 
 WORKDIR /workspaces/art-dash
+RUN mkdir .vscode
+RUN sudo chmod a+rw .vscode
+COPY launch.json .vscode
+
 # Upadate pip
 RUN python3 -m pip install --upgrade pip
 COPY requirements.txt ./

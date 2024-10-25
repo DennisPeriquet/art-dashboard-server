@@ -12,6 +12,7 @@ from . import request_dispatcher
 from .serializer import BuildSerializer
 import django_filters
 from github import Github, GithubException
+from jira import JIRA
 import json
 import re
 import os
@@ -179,51 +180,19 @@ def test(request):
         "payload": "Setup successful!"
     }, status=200)
 
-
-@api_view(["GET"])
-def git_api(request):
+def create_PR(git_user, branch, file_content, image_name, jira_number):
+    """
+    Create a PR and return a pr_status object and a status code.
+    """
     try:
-        git_user = request.query_params.get('git_user', None)
-        branch = request.query_params.get('branch', None)
-        jira_number = request.query_params.get('jira_number', None)
-        file_content = request.query_params.get('file_content', None)
-        image_name = request.query_params.get('image_name', None)
-        test_mode = request.query_params.get('test_mode', None)
-
-        # extract the host from the request.
-        host = request.get_host()
-
-        if not all([git_user, branch, jira_number, file_content, image_name]):
-            # These are all required. If any are missing, return an error and
-            # list what the user passed in.
-            return Response({
-                "error": "Missing required parameters",
-                "parameters": {
-                    "git_user": git_user,
-                    "branch": branch,
-                    "jira_number": jira_number,
-                    "file_content": file_content,
-                    "image_name": image_name
-                }
-            }, status=400)
-
-        print(f"Git User: {git_user}")
-        print(f"Jira Number: {jira_number}")
-
-        # Do this for now to speed things up for the connectivity test.
-        # Test mode is the default (when not specified).
-        if not test_mode or 'true' in test_mode.lower():
-            return Response({
-                "status": "success",
-                "payload": f"{host}: Fake PR created successfully",
-                "pr_url": "https://github.com/DennisPeriquet/ocp-build-data/pull/10"
-            }, status=200)
-
         # Load the git token from an environment variable, later we can update the deployment
         # to get the token from a Kubernetes environment variable sourced from a secret.
         github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
         if not github_token:
-            return Response({"error": "git token not in GITHUB_PERSONAL_ACCESS_TOKEN environment variable"}, status=500)
+            return {
+                "status": "failure",
+                "error": "git token not in GITHUB_PERSONAL_ACCESS_TOKEN environment variable"
+            }, 500
 
         git_object = Github(github_token)
 
@@ -284,18 +253,130 @@ def git_api(request):
         )
 
         print(f"Pull request created: {pr.html_url} on branch {new_branch_name}")
-        return Response({
+        return {
             "status": "success",
             "payload": "PR created successfully",
             "pr_url": pr.html_url
-        }, status=200)
+        }, 200
 
     except GithubException as e:
         print(f"git api error: {str(e)}")
-        return Response({"error": f"git api error: {e.data.get('message', 'Unknown error')}"}, status=e.status)
+        return {
+            "status": "failure",
+            "error": f"git api error: {e.data.get('message', 'Unknown error')}"
+            }, e.status
+
     except Exception as e:
         print(f"Unexpected error: {str(e)}")
-        return Response({"error": f"Unexpected error: {str(e)}"}, status=500)
+        return {
+            "status": "failure",
+            "error": f"Unexpected error: {str(e)}"
+        }, 500
+
+def create_JIRA():
+    """
+    Create a Jira and return the jira_status and return code.
+    """
+    # Login to Jira
+    jira_email = os.environ.get('JIRA_EMAIL')
+    jira_api_token = os.environ.get('JIRA_TOKEN')
+
+    print(f"Jira Email: {jira_email}")
+    print("Jira API Token: redacted")
+    if not jira_email or not jira_api_token:
+        return {
+            "status": "failure",
+            "error": "Missing Jira credentials"
+        }, 400
+
+    try:
+        # Attempt to connect to Jira
+        headers = JIRA.DEFAULT_OPTIONS["headers"].copy()
+        headers["Authorization"] = f"Bearer {jira_api_token}"
+
+        jira = JIRA(server='https://issues.redhat.com/', options={"headers": headers})
+
+        # Test the connection by retrieving a basic resource, like the user's profile
+        user = jira.current_user()
+        if user:
+            print(f"Successfully authenticated as {user}.")
+            server_info = jira.server_info()
+            print(f"Jira server info: {server_info}")
+        else:
+            return {
+                "status": "failure",
+                "error": "Failed to authenticate to Jira."
+            }, 400
+
+    except Exception as e:
+        # Handle failed authentication or connection issues
+        print(f"Authentication error: {str(e)}")
+        return {
+            "status": "failure",
+            "error": f"Authentication error: {str(e)}"
+        }, 400
+
+
+@api_view(["GET"])
+def git_jira_api(request):
+    git_user = request.query_params.get('git_user', None)
+    branch = request.query_params.get('branch', None)
+    file_content = request.query_params.get('file_content', None)
+    image_name = request.query_params.get('image_name', None)
+    git_test_mode_value = request.query_params.get('git_test_mode', None)
+    jira_test_mode_value = request.query_params.get('jira_test_mode', None)
+
+    # extract the host from the request.
+    host = request.get_host()
+
+    if not all([git_user, branch, file_content, image_name]):
+        # These are all required. If any are missing, return an error and
+        # list what the user passed in.
+        return Response({
+            "status": "failure",
+            "error": "Missing required parameters",
+            "parameters": {
+                "git_user": git_user,
+                "branch": branch,
+                "file_content": file_content,
+                "image_name": image_name
+            }
+        }, status=400)
+
+    print(f"Git User: {git_user}")
+
+    # Test mode is the default (when not specified).
+    git_test_mode = False
+    jira_test_mode = False
+    if not git_test_mode_value or 'true' in git_test_mode_value.lower():
+        git_test_mode = True
+    if not jira_test_mode_value or 'true' in jira_test_mode_value.lower():
+        jira_test_mode = True
+
+    if git_test_mode:
+        # Just create a success status and fake PR without using the git API
+        pr_status = {
+            "status": "success",
+            "payload": f"{host}: Fake PR created successfully",
+            "pr_url": "https://github.com/DennisPeriquet/ocp-build-data/pull/10"
+        }
+    else:
+        pr_status = create_PR(git_user, branch, file_content, image_name)
+
+
+    # Extract the PR url from the pr_status
+    pr_url = pr_status['pr_url']
+
+    if jira_test_mode:
+        jira_status = {
+            "status": "success",
+            "jira_url": "https://issues.redhat.com/browse/ART-11093",
+            "pr_url": pr_url
+        }
+        return Response(jira_status, status=200)
+    else:
+        print("Production mode not implemented")
+        return Response(jira_status, status=200)
 
 
 @api_view(["GET"])
