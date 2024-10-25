@@ -191,13 +191,20 @@ def git_jira_api(request):
     branch = request.query_params.get('branch', None)
     file_content = request.query_params.get('file_content', None)
     image_name = request.query_params.get('image_name', None)
+    jira_summary = request.query_params.get('jira_summary', None)
+    jira_description = request.query_params.get('jira_description', None)
+    jira_project_id = request.query_params.get('jira_project_id', None)
+    jira_story_type_id = request.query_params.get('jira_story_type_id', None)
+    jira_component = request.query_params.get('jira_component', None)
+    jira_priority = request.query_params.get('jira_priority', None)
+
     git_test_mode_value = request.query_params.get('git_test_mode', None)
     jira_test_mode_value = request.query_params.get('jira_test_mode', None)
 
     # extract the host from the request.
     host = request.get_host()
 
-    if not all([git_user, branch, file_content, image_name]):
+    if not all([git_user, branch, file_content, image_name, jira_summary, jira_description, jira_project_id, jira_story_type_id, jira_component, jira_priority]):
         # These are all required. If any are missing, return an error and
         # list what the user passed in.
         return Response({
@@ -207,7 +214,13 @@ def git_jira_api(request):
                 "git_user": git_user,
                 "branch": branch,
                 "file_content": file_content,
-                "image_name": image_name
+                "image_name": image_name,
+                "jira_summary": jira_summary,
+                "jira_description": jira_description,
+                "jira_project_id": jira_project_id,
+                "jira_story_type_id": jira_story_type_id,
+                "jira_component": jira_component,
+                "jira_priority": jira_priority
             }
         }, status=400)
 
@@ -238,14 +251,14 @@ def git_jira_api(request):
                     "status": "failure",
                     "error": "git token not in GITHUB_PERSONAL_ACCESS_TOKEN environment variable"
                 }, 500
-    
+
             git_object = Github(github_token)
-    
+
             def make_github_request(func, *args, **kwargs):
                 """
                 This function applies retry logic (with exponential backoff) to git api calls.
                 """
-    
+
                 max_retries = 3
                 retry_delay = 5
                 for attempt in range(max_retries):
@@ -264,20 +277,21 @@ def git_jira_api(request):
                     time.sleep(retry_delay)
                     retry_delay *= 2
                 raise Exception("Max retries exceeded on call to {func.__name__}")
-    
+
             # Get the repository
             repo = make_github_request(git_object.get_repo, f"{git_user}/ocp-build-data")
-    
+
             # Get the base branch
             base_branch = make_github_request(repo.get_branch, branch)
-    
-            # Generate a unique branch name from the base branch
-            unique_id = uuid.uuid4().hex[:10]
-            new_branch_name = f"art-dashboard-new-image-{unique_id}"
-    
+
+            # Generate a unique branch name based on time so you can easily tell how
+            # old the branch is in case we need to cleanup.
+            timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")
+            new_branch_name = f"art-dashboard-new-image-{timestamp}"
+
             # Create a new branch off the base branch
             make_github_request(repo.create_git_ref, ref=f"refs/heads/{new_branch_name}", sha=base_branch.commit.sha)
-    
+
             # Create the file (images/pf-status-relay.yml) on the new branch
             file_path = f"images/{image_name}.yml"
             make_github_request(
@@ -287,7 +301,7 @@ def git_jira_api(request):
                 content=file_content,
                 branch=new_branch_name
             )
-    
+
             # Create a pull request from the new branch to the base branch
             pr = make_github_request(
                 repo.create_pull,
@@ -296,24 +310,24 @@ def git_jira_api(request):
                 head=new_branch_name,
                 base=branch
             )
-    
+
             print(f"Pull request created: {pr.html_url} on branch {new_branch_name}")
             pr_status = {
                 "status": "success",
                 "payload": "PR created successfully",
                 "pr_url": pr.html_url
             }
-    
+
         except GithubException as e:
             print(f"git api error: {str(e)}")
             return {
                 "status": "failure",
                 "error": f"git api error: {e.data.get('message', 'Unknown error')}"
-                }, e.status
-    
+            }, e.status
+
         except Exception as e:
             print(f"Unexpected error: {str(e)}")
-            
+
             return {
                 "status": "failure",
                 "error": f"Unexpected error: {str(e)}"
@@ -368,14 +382,30 @@ def git_jira_api(request):
                 "status": "failure",
                 "error": f"Authentication error: {str(e)}"
             }, 400
-        
+
+        jira_data = {
+            "project": {"key": jira_project_id},
+            "summary": jira_summary,
+            "description": jira_description,
+            "issuetype": {"name": jira_story_type_id},
+            "components": [{"name": jira_component}],
+            "priority": {"name": jira_priority},
+        }
+
+        try:
+            # Attempt to create the Jira
+            new_jira = jira.create_issue(fields=jira_data)
+        except Exception as e:
+            print(f"An error occurred while creating the jira: {str(e)}")
+
+        jiraID = new_jira.key
         # Now that we have a Jira, patch the PR title with the JiraID
-        pr.edit(title=f"[{TEST_ART_JIRA}] {image_name} image add")
-        pr.edit(body=f"Ticket: {TEST_ART_JIRA}\n\nThis PR adds the {image_name} image file")
+        pr.edit(title=f"[{jiraID}] {image_name} image add")
+        pr.edit(body=f"Ticket: {jiraID}\n\nThis PR adds the {image_name} image file")
 
         jira_status = {
             "status": "success",
-            "jira_url": f"https://issues.redhat.com/browse/{TEST_ART_JIRA}",
+            "jira_url": f"https://issues.redhat.com/browse/{jiraID}",
             "pr_url": pr_url
         }
         return Response(jira_status, status=200)
