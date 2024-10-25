@@ -180,145 +180,13 @@ def test(request):
         "payload": "Setup successful!"
     }, status=200)
 
-def create_PR(git_user, branch, file_content, image_name, jira_number):
-    """
-    Create a PR and return a pr_status object and a status code.
-    """
-    try:
-        # Load the git token from an environment variable, later we can update the deployment
-        # to get the token from a Kubernetes environment variable sourced from a secret.
-        github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
-        if not github_token:
-            return {
-                "status": "failure",
-                "error": "git token not in GITHUB_PERSONAL_ACCESS_TOKEN environment variable"
-            }, 500
-
-        git_object = Github(github_token)
-
-        def make_github_request(func, *args, **kwargs):
-            """
-            This function applies retry logic (with exponential backoff) to git api calls.
-            """
-
-            max_retries = 3
-            retry_delay = 5
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except GithubException as e:
-                    if e.status == 403 and "rate limit" in e.data.get("message", "").lower():
-                        print(f"Rate limit exceeded, retrying in {retry_delay} seconds...")
-                    elif e.status >= 500 or e.status < 600:
-                        print(f"Server error {e.status}, retrying in {retry_delay} seconds...")
-                    else:
-                        raise
-                except Exception as e:
-                    print(f"Unexpected error: {str(e)}")
-                    raise
-                time.sleep(retry_delay)
-                retry_delay *= 2
-            raise Exception("Max retries exceeded on call to {func.__name__}")
-
-        # Get the repository
-        repo = make_github_request(git_object.get_repo, f"{git_user}/ocp-build-data")
-
-        # Get the base branch
-        base_branch = make_github_request(repo.get_branch, branch)
-
-        # Generate a unique branch name from the base branch
-        unique_id = uuid.uuid4().hex[:10]
-        new_branch_name = f"art-dashboard-new-image-{unique_id}"
-
-        # Create a new branch off the base branch
-        make_github_request(repo.create_git_ref, ref=f"refs/heads/{new_branch_name}", sha=base_branch.commit.sha)
-
-        # Create the file (images/pf-status-relay.yml) on the new branch
-        file_path = f"images/{image_name}.yml"
-        make_github_request(
-            repo.create_file,
-            path=file_path,
-            message=f"{image_name} image add",
-            content=file_content,
-            branch=new_branch_name
-        )
-
-        # Create a pull request from the new branch to the base branch
-        pr = make_github_request(
-            repo.create_pull,
-            title=f"[{jira_number}] {image_name} image add",
-            body=f"Ticket: {jira_number}\n\nThis PR adds the {image_name} image file",
-            head=new_branch_name,
-            base=branch
-        )
-
-        print(f"Pull request created: {pr.html_url} on branch {new_branch_name}")
-        return {
-            "status": "success",
-            "payload": "PR created successfully",
-            "pr_url": pr.html_url
-        }, 200
-
-    except GithubException as e:
-        print(f"git api error: {str(e)}")
-        return {
-            "status": "failure",
-            "error": f"git api error: {e.data.get('message', 'Unknown error')}"
-            }, e.status
-
-    except Exception as e:
-        print(f"Unexpected error: {str(e)}")
-        return {
-            "status": "failure",
-            "error": f"Unexpected error: {str(e)}"
-        }, 500
-
-def create_JIRA():
-    """
-    Create a Jira and return the jira_status and return code.
-    """
-    # Login to Jira
-    jira_email = os.environ.get('JIRA_EMAIL')
-    jira_api_token = os.environ.get('JIRA_TOKEN')
-
-    print(f"Jira Email: {jira_email}")
-    print("Jira API Token: redacted")
-    if not jira_email or not jira_api_token:
-        return {
-            "status": "failure",
-            "error": "Missing Jira credentials"
-        }, 400
-
-    try:
-        # Attempt to connect to Jira
-        headers = JIRA.DEFAULT_OPTIONS["headers"].copy()
-        headers["Authorization"] = f"Bearer {jira_api_token}"
-
-        jira = JIRA(server='https://issues.redhat.com/', options={"headers": headers})
-
-        # Test the connection by retrieving a basic resource, like the user's profile
-        user = jira.current_user()
-        if user:
-            print(f"Successfully authenticated as {user}.")
-            server_info = jira.server_info()
-            print(f"Jira server info: {server_info}")
-        else:
-            return {
-                "status": "failure",
-                "error": "Failed to authenticate to Jira."
-            }, 400
-
-    except Exception as e:
-        # Handle failed authentication or connection issues
-        print(f"Authentication error: {str(e)}")
-        return {
-            "status": "failure",
-            "error": f"Authentication error: {str(e)}"
-        }, 400
 
 
 @api_view(["GET"])
 def git_jira_api(request):
+
+    TEST_ART_JIRA = "TEST-ART-999"
+
     git_user = request.query_params.get('git_user', None)
     branch = request.query_params.get('branch', None)
     file_content = request.query_params.get('file_content', None)
@@ -361,8 +229,95 @@ def git_jira_api(request):
             "pr_url": "https://github.com/DennisPeriquet/ocp-build-data/pull/10"
         }
     else:
-        pr_status = create_PR(git_user, branch, file_content, image_name)
-
+        try:
+            # Load the git token from an environment variable, later we can update the deployment
+            # to get the token from a Kubernetes environment variable sourced from a secret.
+            github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
+            if not github_token:
+                return {
+                    "status": "failure",
+                    "error": "git token not in GITHUB_PERSONAL_ACCESS_TOKEN environment variable"
+                }, 500
+    
+            git_object = Github(github_token)
+    
+            def make_github_request(func, *args, **kwargs):
+                """
+                This function applies retry logic (with exponential backoff) to git api calls.
+                """
+    
+                max_retries = 3
+                retry_delay = 5
+                for attempt in range(max_retries):
+                    try:
+                        return func(*args, **kwargs)
+                    except GithubException as e:
+                        if e.status == 403 and "rate limit" in e.data.get("message", "").lower():
+                            print(f"Rate limit exceeded, retrying in {retry_delay} seconds...")
+                        elif e.status >= 500 or e.status < 600:
+                            print(f"Server error {e.status}, retrying in {retry_delay} seconds...")
+                        else:
+                            raise
+                    except Exception as e:
+                        print(f"Unexpected error: {str(e)}")
+                        raise
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                raise Exception("Max retries exceeded on call to {func.__name__}")
+    
+            # Get the repository
+            repo = make_github_request(git_object.get_repo, f"{git_user}/ocp-build-data")
+    
+            # Get the base branch
+            base_branch = make_github_request(repo.get_branch, branch)
+    
+            # Generate a unique branch name from the base branch
+            unique_id = uuid.uuid4().hex[:10]
+            new_branch_name = f"art-dashboard-new-image-{unique_id}"
+    
+            # Create a new branch off the base branch
+            make_github_request(repo.create_git_ref, ref=f"refs/heads/{new_branch_name}", sha=base_branch.commit.sha)
+    
+            # Create the file (images/pf-status-relay.yml) on the new branch
+            file_path = f"images/{image_name}.yml"
+            make_github_request(
+                repo.create_file,
+                path=file_path,
+                message=f"{image_name} image add",
+                content=file_content,
+                branch=new_branch_name
+            )
+    
+            # Create a pull request from the new branch to the base branch
+            pr = make_github_request(
+                repo.create_pull,
+                title=f"[JIRA-TBD] {image_name} image add",
+                body=f"Ticket: JIRA-TBD\n\nThis PR adds the {image_name} image file",
+                head=new_branch_name,
+                base=branch
+            )
+    
+            print(f"Pull request created: {pr.html_url} on branch {new_branch_name}")
+            pr_status = {
+                "status": "success",
+                "payload": "PR created successfully",
+                "pr_url": pr.html_url
+            }
+    
+        except GithubException as e:
+            print(f"git api error: {str(e)}")
+            return {
+                "status": "failure",
+                "error": f"git api error: {e.data.get('message', 'Unknown error')}"
+                }, e.status
+    
+        except Exception as e:
+            print(f"Unexpected error: {str(e)}")
+            
+            return {
+                "status": "failure",
+                "error": f"Unexpected error: {str(e)}"
+            }, 500
 
     # Extract the PR url from the pr_status
     pr_url = pr_status['pr_url']
@@ -370,12 +325,59 @@ def git_jira_api(request):
     if jira_test_mode:
         jira_status = {
             "status": "success",
-            "jira_url": "https://issues.redhat.com/browse/ART-11093",
+            "jira_url": f"https://issues.redhat.com/browse/{TEST_ART_JIRA}",
             "pr_url": pr_url
         }
         return Response(jira_status, status=200)
     else:
-        print("Production mode not implemented")
+        # Login to Jira
+        jira_email = os.environ.get('JIRA_EMAIL')
+        jira_api_token = os.environ.get('JIRA_TOKEN')
+
+        print(f"Jira Email: {jira_email}")
+        print("Jira API Token: redacted")
+        if not jira_email or not jira_api_token:
+            return {
+                "status": "failure",
+                "error": "Missing Jira credentials"
+            }, 400
+
+        try:
+            # Attempt to connect to Jira
+            headers = JIRA.DEFAULT_OPTIONS["headers"].copy()
+            headers["Authorization"] = f"Bearer {jira_api_token}"
+
+            jira = JIRA(server='https://issues.redhat.com/', options={"headers": headers})
+
+            # Test the connection by retrieving a basic resource, like the user's profile
+            user = jira.current_user()
+            if user:
+                print(f"Successfully authenticated as {user}.")
+                server_info = jira.server_info()
+                print(f"Jira server info: {server_info}")
+            else:
+                return {
+                    "status": "failure",
+                    "error": "Failed to authenticate to Jira."
+                }, 400
+
+        except Exception as e:
+            # Handle failed authentication or connection issues
+            print(f"Authentication error: {str(e)}")
+            return {
+                "status": "failure",
+                "error": f"Authentication error: {str(e)}"
+            }, 400
+        
+        # Now that we have a Jira, patch the PR title with the JiraID
+        pr.edit(title=f"[{TEST_ART_JIRA}] {image_name} image add")
+        pr.edit(body=f"Ticket: {TEST_ART_JIRA}\n\nThis PR adds the {image_name} image file")
+
+        jira_status = {
+            "status": "success",
+            "jira_url": f"https://issues.redhat.com/browse/{TEST_ART_JIRA}",
+            "pr_url": pr_url
+        }
         return Response(jira_status, status=200)
 
 
