@@ -19,6 +19,7 @@ import os
 import jwt
 import time
 import uuid
+import requests
 from datetime import datetime, timedelta
 from build_interface.settings import SECRET_KEY, SESSION_COOKIE_DOMAIN, JWTAuthentication
 
@@ -181,14 +182,11 @@ def test(request):
     }, status=200)
 
 
-
 @api_view(["GET"])
 def git_jira_api(request):
 
     TEST_ART_JIRA = "TEST-ART-999"
 
-    git_user = request.query_params.get('git_user', None)
-    branch = request.query_params.get('branch', None)
     file_content = request.query_params.get('file_content', None)
     image_name = request.query_params.get('image_name', None)
     jira_summary = request.query_params.get('jira_summary', None)
@@ -204,15 +202,13 @@ def git_jira_api(request):
     # extract the host from the request.
     host = request.get_host()
 
-    if not all([git_user, branch, file_content, image_name, jira_summary, jira_description, jira_project_id, jira_story_type_id, jira_component, jira_priority]):
+    if not all([file_content, image_name, jira_summary, jira_description, jira_project_id, jira_story_type_id, jira_component, jira_priority]):
         # These are all required. If any are missing, return an error and
         # list what the user passed in.
         return Response({
             "status": "failure",
             "error": "Missing required parameters",
             "parameters": {
-                "git_user": git_user,
-                "branch": branch,
                 "file_content": file_content,
                 "image_name": image_name,
                 "jira_summary": jira_summary,
@@ -224,8 +220,6 @@ def git_jira_api(request):
             }
         }, status=400)
 
-    print(f"Git User: {git_user}")
-
     # Test mode is the default (when not specified).
     git_test_mode = False
     jira_test_mode = False
@@ -234,12 +228,48 @@ def git_jira_api(request):
     if not jira_test_mode_value or 'true' in jira_test_mode_value.lower():
         jira_test_mode = True
 
+    # Get the base branch by getting the Openshift release from the Sippy API that
+    # hasn't yet released.
+    current_release = None
+    response = requests.get("https://sippy.dptools.openshift.org/api/releases")
+    if response.status_code == 200:
+        try:
+            data = response.json()
+            releases = data.get("releases", [])
+            ga_dates = data.get("ga_dates", {})
+        except Exception as e:
+            return Response({
+                "status": "failure",
+                "error": f"Invalid data format received from Sippy API: {str(e)}"
+            }, status=500)
+
+        # Find the release with no GA date
+        for release in releases:
+            if release not in ga_dates:
+                current_release = release
+                break
+        else:
+            return Response({
+                "status": "failure",
+                "error": "No Openshift release found without a GA date"
+            }, status=500)
+    else:
+        return Response({
+            "status": "failure",
+            "error": "Failed to determine current Openshift release"
+        }, status=500)
+
+    branch = current_release
+
+    # FIXME: This is a temporary setting during development; it will eventually be openshift-eng
+    git_user = "DennisPeriquet"
+
     if git_test_mode:
         # Just create a success status and fake PR without using the git API
         pr_status = {
             "status": "success",
             "payload": f"{host}: Fake PR created successfully",
-            "pr_url": "https://github.com/DennisPeriquet/ocp-build-data/pull/10"
+            "pr_url": f"https://github.com/{git_user}/ocp-build-data/pull/10"
         }
     else:
         try:
@@ -247,10 +277,10 @@ def git_jira_api(request):
             # to get the token from a Kubernetes environment variable sourced from a secret.
             github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
             if not github_token:
-                return {
+                return Response({
                     "status": "failure",
                     "error": "git token not in GITHUB_PERSONAL_ACCESS_TOKEN environment variable"
-                }, 500
+                }, status=500)
 
             git_object = Github(github_token)
 
@@ -281,11 +311,11 @@ def git_jira_api(request):
             # Get the repository
             repo = make_github_request(git_object.get_repo, f"{git_user}/ocp-build-data")
 
-            # Get the base branch
-            base_branch = make_github_request(repo.get_branch, branch)
+            # Get the base branch where we will make the PR against.
+            base_branch = make_github_request(repo.get_branch, f"openshift-{current_release}")
 
-            # Generate a unique branch name based on time so you can easily tell how
-            # old the branch is in case we need to cleanup.
+            # Generate a unique branch name based on current time so you can easily tell how
+            # old the branch is in case we need to clean up.
             timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")
             new_branch_name = f"art-dashboard-new-image-{timestamp}"
 
