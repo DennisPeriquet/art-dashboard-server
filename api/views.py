@@ -11,10 +11,15 @@ from build.models import Build
 from . import request_dispatcher
 from .serializer import BuildSerializer
 import django_filters
+from github import Github, GithubException
+from jira import JIRA
 import json
 import re
 import os
 import jwt
+import time
+import uuid
+import requests
 from datetime import datetime, timedelta
 from build_interface.settings import SECRET_KEY, SESSION_COOKIE_DOMAIN, JWTAuthentication
 
@@ -175,6 +180,266 @@ def test(request):
         "status": "success",
         "payload": "Setup successful!"
     }, status=200)
+
+
+@api_view(["GET"])
+def git_jira_api(request):
+
+    TEST_ART_JIRA = "TEST-ART-999"
+
+    file_content = request.query_params.get('file_content', None)
+    image_name = request.query_params.get('image_name', None)
+    jira_summary = request.query_params.get('jira_summary', None)
+    jira_description = request.query_params.get('jira_description', None)
+    jira_project_id = request.query_params.get('jira_project_id', None)
+    jira_story_type_id = request.query_params.get('jira_story_type_id', None)
+    jira_component = request.query_params.get('jira_component', None)
+    jira_priority = request.query_params.get('jira_priority', None)
+
+    git_test_mode_value = request.query_params.get('git_test_mode', None)
+    jira_test_mode_value = request.query_params.get('jira_test_mode', None)
+
+    # extract the host from the request.
+    host = request.get_host()
+
+    if not all([file_content, image_name, jira_summary, jira_description, jira_project_id, jira_story_type_id, jira_component, jira_priority]):
+        # These are all required. If any are missing, return an error and
+        # list what the user passed in.
+        return Response({
+            "status": "failure",
+            "error": "Missing required parameters",
+            "parameters": {
+                "file_content": file_content,
+                "image_name": image_name,
+                "jira_summary": jira_summary,
+                "jira_description": jira_description,
+                "jira_project_id": jira_project_id,
+                "jira_story_type_id": jira_story_type_id,
+                "jira_component": jira_component,
+                "jira_priority": jira_priority
+            }
+        }, status=400)
+
+    # Test mode is the default (when not specified).
+    git_test_mode = False
+    jira_test_mode = False
+    if not git_test_mode_value or 'true' in git_test_mode_value.lower():
+        git_test_mode = True
+    if not jira_test_mode_value or 'true' in jira_test_mode_value.lower():
+        jira_test_mode = True
+
+    # Get the base branch by getting the Openshift release from the Sippy API that
+    # hasn't yet released.
+    current_release = None
+    response = requests.get("https://sippy.dptools.openshift.org/api/releases")
+    if response.status_code == 200:
+        try:
+            data = response.json()
+            releases = data.get("releases", [])
+            ga_dates = data.get("ga_dates", {})
+        except Exception as e:
+            return Response({
+                "status": "failure",
+                "error": f"Invalid data format received from Sippy API: {str(e)}"
+            }, status=500)
+
+        # Find the release with no GA date
+        for release in releases:
+            if release not in ga_dates:
+                current_release = release
+                break
+        else:
+            return Response({
+                "status": "failure",
+                "error": "No Openshift release found without a GA date"
+            }, status=500)
+    else:
+        return Response({
+            "status": "failure",
+            "error": "Failed to determine current Openshift release"
+        }, status=500)
+
+    branch = current_release
+
+    # FIXME: This is a temporary setting during development; it will eventually be openshift-eng
+    git_user = "DennisPeriquet"
+
+    if git_test_mode:
+        # Just create a success status and fake PR without using the git API
+        pr_status = {
+            "status": "success",
+            "payload": f"{host}: Fake PR created successfully",
+            "pr_url": f"https://github.com/{git_user}/ocp-build-data/pull/10"
+        }
+    else:
+        try:
+            # Load the git token from an environment variable, later we can update the deployment
+            # to get the token from a Kubernetes environment variable sourced from a secret.
+            github_token = os.getenv("GITHUB_PERSONAL_ACCESS_TOKEN")
+            if not github_token:
+                return Response({
+                    "status": "failure",
+                    "error": "git token not in GITHUB_PERSONAL_ACCESS_TOKEN environment variable"
+                }, status=500)
+
+            git_object = Github(github_token)
+
+            def make_github_request(func, *args, **kwargs):
+                """
+                This function applies retry logic (with exponential backoff) to git api calls.
+                """
+
+                max_retries = 3
+                retry_delay = 5
+                for attempt in range(max_retries):
+                    try:
+                        return func(*args, **kwargs)
+                    except GithubException as e:
+                        if e.status == 403 and "rate limit" in e.data.get("message", "").lower():
+                            print(f"Rate limit exceeded, retrying in {retry_delay} seconds...")
+                        elif e.status >= 500 or e.status < 600:
+                            print(f"Server error {e.status}, retrying in {retry_delay} seconds...")
+                        else:
+                            raise
+                    except Exception as e:
+                        print(f"Unexpected error: {str(e)}")
+                        raise
+                    time.sleep(retry_delay)
+                    retry_delay *= 2
+                raise Exception("Max retries exceeded on call to {func.__name__}")
+
+            # Get the repository
+            repo = make_github_request(git_object.get_repo, f"{git_user}/ocp-build-data")
+
+            # Get the base branch where we will make the PR against.
+            current_release_branch = f"openshift-{current_release}"
+            base_branch = make_github_request(repo.get_branch, current_release_branch)
+
+            # Generate a unique branch name based on current time so you can easily tell how
+            # old the branch is in case we need to clean up.
+            timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M-%S-%f")
+            new_branch_name = f"art-dashboard-new-image-{timestamp}"
+
+            # Create a new branch off the base branch
+            make_github_request(repo.create_git_ref, ref=f"refs/heads/{new_branch_name}", sha=base_branch.commit.sha)
+
+            # Create the file (images/pf-status-relay.yml) on the new branch
+            file_path = f"images/{image_name}.yml"
+            make_github_request(
+                repo.create_file,
+                path=file_path,
+                message=f"{image_name} image add",
+                content=file_content,
+                branch=new_branch_name
+            )
+
+            # Create a pull request from the new branch to the base branch
+            pr = make_github_request(
+                repo.create_pull,
+                title=f"[JIRA-TBD] {image_name} image add",
+                body=f"Ticket: JIRA-TBD\n\nThis PR adds the {image_name} image file",
+                head=new_branch_name,
+                base=current_release_branch
+            )
+
+            print(f"Pull request created: {pr.html_url} on branch {new_branch_name}")
+            pr_status = {
+                "status": "success",
+                "payload": "PR created successfully",
+                "pr_url": pr.html_url
+            }
+
+        except GithubException as e:
+            print(f"git api error: {str(e)}")
+            return {
+                "status": "failure",
+                "error": f"git api error: {e.data.get('message', 'Unknown error')}"
+            }, e.status
+
+        except Exception as e:
+            print(f"Unexpected error: {str(e)}")
+
+            return {
+                "status": "failure",
+                "error": f"Unexpected error: {str(e)}"
+            }, 500
+
+    # Extract the PR url from the pr_status
+    pr_url = pr_status['pr_url']
+
+    if jira_test_mode:
+        jira_status = {
+            "status": "success",
+            "jira_url": f"https://issues.redhat.com/browse/{TEST_ART_JIRA}",
+            "pr_url": pr_url
+        }
+        return Response(jira_status, status=200)
+    else:
+        # Login to Jira
+        jira_email = os.environ.get('JIRA_EMAIL')
+        jira_api_token = os.environ.get('JIRA_TOKEN')
+
+        print(f"Jira Email: {jira_email}")
+        print("Jira API Token: redacted")
+        if not jira_email or not jira_api_token:
+            return {
+                "status": "failure",
+                "error": "Missing Jira credentials"
+            }, 400
+
+        try:
+            # Attempt to connect to Jira
+            headers = JIRA.DEFAULT_OPTIONS["headers"].copy()
+            headers["Authorization"] = f"Bearer {jira_api_token}"
+
+            jira = JIRA(server='https://issues.redhat.com/', options={"headers": headers})
+
+            # Test the connection by retrieving a basic resource, like the user's profile
+            user = jira.current_user()
+            if user:
+                print(f"Successfully authenticated as {user}.")
+                server_info = jira.server_info()
+                print(f"Jira server info: {server_info}")
+            else:
+                return {
+                    "status": "failure",
+                    "error": "Failed to authenticate to Jira."
+                }, 400
+
+        except Exception as e:
+            # Handle failed authentication or connection issues
+            print(f"Authentication error: {str(e)}")
+            return {
+                "status": "failure",
+                "error": f"Authentication error: {str(e)}"
+            }, 400
+
+        jira_data = {
+            "project": {"key": jira_project_id},
+            "summary": jira_summary,
+            "description": jira_description,
+            "issuetype": {"name": jira_story_type_id},
+            "components": [{"name": jira_component}],
+            "priority": {"name": jira_priority},
+        }
+
+        try:
+            # Attempt to create the Jira
+            new_jira = jira.create_issue(fields=jira_data)
+        except Exception as e:
+            print(f"An error occurred while creating the jira: {str(e)}")
+
+        jiraID = new_jira.key
+        # Now that we have a Jira, patch the PR title with the JiraID
+        pr.edit(title=f"[{jiraID}] {image_name} image add")
+        pr.edit(body=f"Ticket: {jiraID}\n\nThis PR adds the {image_name} image file")
+
+        jira_status = {
+            "status": "success",
+            "jira_url": f"https://issues.redhat.com/browse/{jiraID}",
+            "pr_url": pr_url
+        }
+        return Response(jira_status, status=200)
 
 
 @api_view(["GET"])
