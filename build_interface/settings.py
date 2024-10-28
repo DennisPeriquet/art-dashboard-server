@@ -99,6 +99,7 @@ SECRET_KEY = os.getenv(
 DEBUG = False
 
 ALLOWED_HOSTS = [
+    'chopin2',
     '127.0.0.1',
     'localhost',
     '0.0.0.0',
