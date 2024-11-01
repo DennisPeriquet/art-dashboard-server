@@ -266,6 +266,8 @@ def git_jira_api(request):
                     except GithubException as e:
                         if e.status == 403 and "rate limit" in e.data.get("message", "").lower():
                             print(f"Rate limit exceeded, retrying in {retry_delay} seconds...")
+                        elif e.status == 404:
+                            print(f"{e.data.get('message')}, retrying in {retry_delay} seconds...")
                         elif e.status >= 500 or e.status < 600:
                             print(f"Server error {e.status}, retrying in {retry_delay} seconds...")
                         else:
