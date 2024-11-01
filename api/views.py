@@ -189,6 +189,7 @@ def git_jira_api(request):
 
     file_content = request.query_params.get('file_content', None)
     image_name = request.query_params.get('image_name', None)
+    release_for_image = request.query_params.get('release_for_image', None)
     jira_summary = request.query_params.get('jira_summary', None)
     jira_description = request.query_params.get('jira_description', None)
     jira_project_id = request.query_params.get('jira_project_id', None)
@@ -202,7 +203,7 @@ def git_jira_api(request):
     # extract the host from the request.
     host = request.get_host()
 
-    if not all([file_content, image_name, jira_summary, jira_description, jira_project_id, jira_story_type_id, jira_component, jira_priority]):
+    if not all([file_content, release_for_image, image_name, jira_summary, jira_description, jira_project_id, jira_story_type_id, jira_component, jira_priority]):
         # These are all required. If any are missing, return an error and
         # list what the user passed in.
         return Response({
@@ -211,6 +212,7 @@ def git_jira_api(request):
             "parameters": {
                 "file_content": file_content,
                 "image_name": image_name,
+                "release_for_image": release_for_image,
                 "jira_summary": jira_summary,
                 "jira_description": jira_description,
                 "jira_project_id": jira_project_id,
@@ -227,39 +229,6 @@ def git_jira_api(request):
         git_test_mode = True
     if not jira_test_mode_value or 'true' in jira_test_mode_value.lower():
         jira_test_mode = True
-
-    # Get the base branch by getting the Openshift release from the Sippy API that
-    # hasn't yet released.
-    current_release = None
-    response = requests.get("https://sippy.dptools.openshift.org/api/releases")
-    if response.status_code == 200:
-        try:
-            data = response.json()
-            releases = data.get("releases", [])
-            ga_dates = data.get("ga_dates", {})
-        except Exception as e:
-            return Response({
-                "status": "failure",
-                "error": f"Invalid data format received from Sippy API: {str(e)}"
-            }, status=500)
-
-        # Find the release with no GA date
-        for release in releases:
-            if release not in ga_dates:
-                current_release = release
-                break
-        else:
-            return Response({
-                "status": "failure",
-                "error": "No Openshift release found without a GA date"
-            }, status=500)
-    else:
-        return Response({
-            "status": "failure",
-            "error": "Failed to determine current Openshift release"
-        }, status=500)
-
-    branch = current_release
 
     # FIXME: This is a temporary setting during development; it will eventually be openshift-eng
     git_user = "DennisPeriquet"
@@ -312,8 +281,7 @@ def git_jira_api(request):
             repo = make_github_request(git_object.get_repo, f"{git_user}/ocp-build-data")
 
             # Get the base branch where we will make the PR against.
-            current_release_branch = f"openshift-{current_release}"
-            base_branch = make_github_request(repo.get_branch, current_release_branch)
+            base_branch = make_github_request(repo.get_branch, release_for_image)
 
             # Generate a unique branch name based on current time so you can easily tell how
             # old the branch is in case we need to clean up.
@@ -339,7 +307,7 @@ def git_jira_api(request):
                 title=f"[JIRA-TBD] {image_name} image add",
                 body=f"Ticket: JIRA-TBD\n\nThis PR adds the {image_name} image file",
                 head=new_branch_name,
-                base=current_release_branch
+                base=release_for_image
             )
 
             print(f"Pull request created: {pr.html_url} on branch {new_branch_name}")
