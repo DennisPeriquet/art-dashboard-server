@@ -265,19 +265,21 @@ def git_jira_api(request):
                         return func(*args, **kwargs)
                     except GithubException as e:
                         if e.status == 403 and "rate limit" in e.data.get("message", "").lower():
-                            print(f"Rate limit exceeded, retrying in {retry_delay} seconds...")
+                            last_message = "Rate limit exceeded"
                         elif e.status == 404:
-                            print(f"{e.data.get('message')}, retrying in {retry_delay} seconds...")
+                            last_message = f"{e.data.get('message')}"
+                            retry_delay = 0
                         elif e.status >= 500 or e.status < 600:
-                            print(f"Server error {e.status}, retrying in {retry_delay} seconds...")
+                            last_message = f"Server error {e.status}"
                         else:
-                            raise
+                            last_message = f"Unknown error {e.status}, {e.data.get('message', '')}"
+                        print(last_message + ", retrying in {retry_delay} seconds...")
                     except Exception as e:
                         print(f"Unexpected error: {str(e)}")
                         raise
                     time.sleep(retry_delay)
                     retry_delay *= 2
-                raise Exception("Max retries exceeded on call to {func.__name__}")
+                raise Exception(f"Max retries exceeded on git api request to '{func.__name__}'; message: '{last_message}'")
 
             # Get the repository
             repo = make_github_request(git_object.get_repo, f"{git_user}/ocp-build-data")
@@ -321,18 +323,18 @@ def git_jira_api(request):
 
         except GithubException as e:
             print(f"git api error: {str(e)}")
-            return {
+            return Response({
                 "status": "failure",
                 "error": f"git api error: {e.data.get('message', 'Unknown error')}"
-            }, e.status
+            }, status=e.status)
 
         except Exception as e:
             print(f"Unexpected error: {str(e)}")
 
-            return {
+            return Response({
                 "status": "failure",
                 "error": f"Unexpected error: {str(e)}"
-            }, 500
+            }, status=500)
 
     # Extract the PR url from the pr_status
     pr_url = pr_status['pr_url']
