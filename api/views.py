@@ -256,10 +256,15 @@ def git_jira_api(request):
             def make_github_request(func, *args, **kwargs):
                 """
                 This function applies retry logic (with exponential backoff) to git api calls.
+                It will raise exceptions for maximum number of retries exceeded, server error,
+                and unexpected errors. GithubException 404 is propagated to the caller.
                 """
 
                 max_retries = 3
                 retry_delay = 5
+                last_message = ""
+                func_error_str = f"Error on git API request to '{func.__name__}'"
+
                 for attempt in range(max_retries):
                     try:
                         return func(*args, **kwargs)
@@ -267,19 +272,21 @@ def git_jira_api(request):
                         if e.status == 403 and "rate limit" in e.data.get("message", "").lower():
                             last_message = "Rate limit exceeded"
                         elif e.status == 404:
-                            last_message = f"{e.data.get('message')}"
-                            retry_delay = 0
-                        elif e.status >= 500 or e.status < 600:
+                            raise
+                        elif 500 <= e.status < 600:
                             last_message = f"Server error {e.status}"
                         else:
                             last_message = f"Unknown error {e.status}, {e.data.get('message', '')}"
                         print(last_message + ", retrying in {retry_delay} seconds...")
+
                     except Exception as e:
-                        print(f"Unexpected error: {str(e)}")
-                        raise
+                        print(f"Unexpected error: {func_error_str} {str(e)}")
+                        raise Exception(f"{func_error_str}: {str(e)}")
+
                     time.sleep(retry_delay)
                     retry_delay *= 2
-                raise Exception(f"Max retries exceeded on git api request to '{func.__name__}'; message: '{last_message}'")
+
+                raise Exception(f"Max retries exceeded, {func_error_str}; message: '{last_message}'")
 
             # Get the repository
             repo = make_github_request(git_object.get_repo, f"{git_user}/ocp-build-data")
@@ -322,18 +329,18 @@ def git_jira_api(request):
             }
 
         except GithubException as e:
-            print(f"git api error: {str(e)}")
+            print(f"GithubException: {str(e)}")
             return Response({
                 "status": "failure",
-                "error": f"git api error: {e.data.get('message', 'Unknown error')}"
+                "error": f"GithubException: {str(e)}"
             }, status=e.status)
 
         except Exception as e:
-            print(f"Unexpected error: {str(e)}")
+            print(f"Other Exception: {str(e)}")
 
             return Response({
                 "status": "failure",
-                "error": f"Unexpected error: {str(e)}"
+                "error": f"Other Exception: {str(e)}"
             }, status=500)
 
     # Extract the PR url from the pr_status
